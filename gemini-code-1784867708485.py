@@ -145,7 +145,6 @@ def safe_num(val):
 def safe_str(val):
     return str(val).strip() if pd.notna(val) and val != "" else ""
 
-# 🌟 細分股票區域邏輯
 hk_stock_val = 0.0
 us_stock_val = 0.0
 jp_stock_val = 0.0
@@ -163,13 +162,11 @@ for _, row in edited_stocks.iterrows():
             us_stock_val += val
 
 stock_value_hkd = hk_stock_val + us_stock_val + jp_stock_val
-
 property_net_value = sum([safe_num(row["現值 (HKD)"]) - safe_num(row["按揭餘額 (HKD)"]) for _, row in df_real_estate.iterrows() if safe_str(row["物業名稱"])])
 cash_value_hkd = sum([float(val) * fx_rates.get(curr, 1.0) for curr, val in data["cash"].items()])
 bond_value_hkd = sum([safe_num(row["現值 (HKD)"]) for _, row in df_bonds.iterrows() if safe_str(row["債券名稱"])])
 
 total_net_assets = stock_value_hkd + property_net_value + cash_value_hkd + bond_value_hkd
-
 liquid_assets = total_net_assets - property_net_value
 
 m_active = sum([safe_num(row["金額 (HKD)"]) for _, row in df_active_inc.iterrows() if safe_str(row["項目名稱"])])
@@ -225,14 +222,12 @@ with tab_dash:
     
     with chart_col1:
         st.subheader("資產分佈")
-        # 🌟 這裡更新了類別名稱與數據
         pie_data = pd.DataFrame({
             "類別": ["港股", "美股", "日股", "地產(淨值)", "現金", "債券"],
             "金額": [hk_stock_val, us_stock_val, jp_stock_val, property_net_value, cash_value_hkd, bond_value_hkd]
         })
         pie_data = pie_data[pie_data["金額"] > 0]
         if not pie_data.empty:
-            # 🌟 使用高對比色系：紅、藍、黃、綠、橙、紫
             custom_colors = ["#FF595E", "#1982C4", "#FFCA3A", "#8AC926", "#F4A261", "#6A4C93"]
             fig_pie = px.pie(pie_data, values="金額", names="類別", hole=0.4, 
                              color_discrete_sequence=custom_colors)
@@ -265,3 +260,22 @@ with tab_dash:
             margin=dict(t=10, b=10, l=10, r=10)
         )
         st.plotly_chart(fig_line, use_container_width=True)
+        
+    # 🌟 這裡新增了「距離 FIRE 的年份預測」
+    st.divider()
+    if target_fire > 0:
+        if total_net_assets >= target_fire:
+            st.success("🎉 恭喜你！根據目前的資產狀況，你已經成功達到財務自由！")
+        else:
+            fire_year = 0
+            temp_val = total_net_assets
+            while temp_val < target_fire and fire_year < 100:
+                fire_year += 1
+                temp_val = (temp_val * (1 + growth_rate)) + annual_surplus
+                
+            if fire_year >= 100:
+                st.warning("⚠️ 根據目前盈餘與投資回報率，距離財務自由仍需超過 100 年。建議減少支出或嘗試提高收入！")
+            else:
+                st.info(f"🚀 堅持下去！根據目前預測，你將會於 **第 {fire_year} 年** 達到財務自由！")
+    else:
+        st.info("💡 請先輸入相關支出數據，以計算你的財務自由進度。")
