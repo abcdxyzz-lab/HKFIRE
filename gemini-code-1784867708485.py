@@ -9,7 +9,6 @@ import plotly.graph_objects as go
 # ================= 配置與介面設定 =================
 st.set_page_config(page_title="HK FIRE Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# 強制深色模式風格 (Streamlit 預設可跟隨系統，此處加強視覺對比)
 st.markdown("""
     <style>
     .stMetric { background-color: #1E2127; padding: 15px; border-radius: 10px; border: 1px solid #333; }
@@ -23,7 +22,6 @@ def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
-    # 預設空數據表
     return {
         "stocks": [["", 0] for _ in range(20)],
         "real_estate": [["", 0.0, 0.0] for _ in range(10)],
@@ -47,24 +45,22 @@ if 'data' not in st.session_state:
 data = st.session_state.data
 
 # ================= 即時金融數據抓取 =================
-@st.cache_data(ttl=3600) # 快取 1 小時避免頻繁呼叫
+@st.cache_data(ttl=3600)
 def get_fx_rates():
-    # 獲取兌港元匯率
     rates = {"HKD": 1.0}
     symbols = {"USD": "HKD=X", "EUR": "EURHKD=X", "GBP": "GBPHKD=X", "JPY": "JPYHKD=X", "TWD": "TWDHKD=X"}
     for curr, sym in symbols.items():
         try:
             rates[curr] = yf.Ticker(sym).fast_info['lastPrice']
         except:
-            rates[curr] = 0.0 # 錯誤保護
+            rates[curr] = 0.0
     return rates
 
-@st.cache_data(ttl=900) # 股價延遲 15 分鐘快取
+@st.cache_data(ttl=900)
 def get_stock_price_hkd(ticker, usd_hkd_rate):
     if not ticker: return 0.0
     try:
         price = yf.Ticker(ticker).fast_info['lastPrice']
-        # 簡單判斷：如果不是 .HK 結尾（如美股 AAPL），則乘上 USDHKD 匯率轉為港幣
         if not str(ticker).upper().endswith(".HK"):
             price *= usd_hkd_rate
         return price
@@ -77,28 +73,27 @@ usd_hkd = fx_rates.get("USD", 7.8)
 # ================= 介面佈局 =================
 st.title("🔥 香港財務自由 (FIRE) Dashboard")
 
-# 建立分頁
 tab_dash, tab_assets, tab_inc_act, tab_inc_pass, tab_exp_m, tab_exp_y = st.tabs([
     "📊 核心指標與圖表", "💰 當前總資產", "💼 每月主動收入", "💸 每月被動收入", "💳 每月支出", "📅 每年支出"
 ])
 
-# --- 數據轉換為 DataFrame 以利編輯 ---
+# --- 🎯 這裡修正了錯誤：加上了 key=data_key ---
 def create_editor(tab, title, columns, data_key, height=400):
     with tab:
         st.subheader(title)
         df = pd.DataFrame(data[data_key], columns=columns)
-        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, height=height)
+        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, height=height, key=data_key)
         data[data_key] = edited_df.values.tolist()
         return edited_df
 
-# --- 分頁：資產輸入 ---
 with tab_assets:
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("📈 股票 (自動抓取股價)")
         st.caption("港股請加 .HK (例: 0700.HK)，美股直接輸入代號 (例: AAPL)")
         df_stocks = pd.DataFrame(data["stocks"], columns=["股票代號", "股數"])
-        edited_stocks = st.data_editor(df_stocks, height=400, use_container_width=True)
+        # --- 🎯 這裡修正了錯誤：加上了 key="stocks_editor" ---
+        edited_stocks = st.data_editor(df_stocks, height=400, use_container_width=True, key="stocks_editor")
         data["stocks"] = edited_stocks.values.tolist()
         
         st.subheader("💵 現金 (自動匯率換算 HKD)")
@@ -114,22 +109,18 @@ with tab_assets:
         df_real_estate = create_editor(tab_assets, "🏠 地產", ["物業名稱", "現值 (HKD)", "按揭餘額 (HKD)"], "real_estate")
         df_bonds = create_editor(tab_assets, "📜 債券", ["債券名稱", "現值 (HKD)"], "bonds", height=300)
 
-# --- 分頁：收入與支出輸入 ---
 df_active_inc = create_editor(tab_inc_act, "💼 每月主動收入", ["項目名稱", "金額 (HKD)"], "active_income")
 df_passive_inc = create_editor(tab_inc_pass, "💸 每月被動收入", ["項目名稱", "金額 (HKD)"], "passive_income")
 df_exp_m = create_editor(tab_exp_m, "💳 每月支出", ["項目名稱", "金額 (HKD)"], "monthly_expenses", height=600)
 df_exp_y = create_editor(tab_exp_y, "📅 每年支出 (非月費)", ["項目名稱", "金額 (HKD)"], "annual_expenses")
 
-
 # ================= 核心邏輯計算 =================
-# 1. 計算資產
 stock_value_hkd = sum([row[1] * get_stock_price_hkd(row[0], usd_hkd) for row in data["stocks"] if row[0]])
 property_net_value = sum([float(row[1]) - float(row[2]) for row in data["real_estate"] if row[0]])
 cash_value_hkd = sum([float(val) * fx_rates.get(curr, 1.0) for curr, val in data["cash"].items()])
 bond_value_hkd = sum([float(row[1]) for row in data["bonds"] if row[0]])
 total_net_assets = stock_value_hkd + property_net_value + cash_value_hkd + bond_value_hkd
 
-# 2. 計算收支
 m_active = sum([float(row[1]) for row in data["active_income"] if row[0]])
 m_passive = sum([float(row[1]) for row in data["passive_income"] if row[0]])
 m_exp = sum([float(row[1]) for row in data["monthly_expenses"] if row[0]])
@@ -138,10 +129,7 @@ y_exp = sum([float(row[1]) for row in data["annual_expenses"] if row[0]])
 annual_total_exp = (m_exp * 12) + y_exp
 annual_surplus = ((m_active + m_passive) * 12) - annual_total_exp
 
-
-# --- 分頁：總覽與圖表 ---
 with tab_dash:
-    # 頂部控制與儲存按鈕
     col_rate, col_save = st.columns([3, 1])
     with col_rate:
         fire_rate_str = st.radio("選擇安全提領率 (SWR):", ["4%", "3.5%", "3%"], horizontal=True, 
@@ -158,16 +146,13 @@ with tab_dash:
 
     st.divider()
 
-    # 指標卡片 (Metric Cards)
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("🎯 目標 FIRE 金額", f"HK$ {target_fire:,.0f}")
     m2.metric("💰 現行資產淨值", f"HK$ {total_net_assets:,.0f}")
     m3.metric("📈 每年盈餘", f"HK$ {annual_surplus:,.0f}")
     m4.metric("🔥 財務自由進度", f"{fire_progress:,.2f} %")
 
-    # 進度條視覺化
     st.progress(min(fire_progress / 100, 1.0))
-
     st.markdown("<br>", unsafe_allow_html=True)
     
     chart_col1, chart_col2 = st.columns([1, 2])
@@ -178,7 +163,6 @@ with tab_dash:
             "類別": ["股票", "地產(淨值)", "現金", "債券"],
             "金額": [stock_value_hkd, property_net_value, cash_value_hkd, bond_value_hkd]
         })
-        # 過濾掉 0 的項目讓圖表更乾淨
         pie_data = pie_data[pie_data["金額"] > 0]
         if not pie_data.empty:
             fig_pie = px.pie(pie_data, values="金額", names="類別", hole=0.4, 
@@ -199,13 +183,11 @@ with tab_dash:
         
         for y in years:
             projected_assets.append(current_val)
-            # 每年結算：資產增值 + 投入當年盈餘
             current_val = (current_val * (1 + growth_rate)) + annual_surplus
             
         fig_line = go.Figure()
         fig_line.add_trace(go.Scatter(x=years, y=projected_assets, mode='lines+markers', 
                                       name="預期資產", line=dict(color='#00FF7F', width=3)))
-        # 加入目標 FIRE 線
         fig_line.add_hline(y=target_fire, line_dash="dash", line_color="red", annotation_text="FIRE 目標")
         
         fig_line.update_layout(
