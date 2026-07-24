@@ -11,7 +11,6 @@ from google.oauth2.service_account import Credentials
 # ================= 配置與介面設定 =================
 st.set_page_config(page_title="HK FIRE Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# 🌟 CSS：強制將標題變成淺灰，數值變成純白加粗
 st.markdown("""
     <style>
     [data-testid="stMetric"] { background-color: #1E2127; padding: 15px; border-radius: 10px; border: 1px solid #333; }
@@ -146,7 +145,25 @@ def safe_num(val):
 def safe_str(val):
     return str(val).strip() if pd.notna(val) and val != "" else ""
 
-stock_value_hkd = sum([safe_num(row["股數"]) * get_stock_price_hkd(safe_str(row["股票代號"]), fx_rates) for _, row in edited_stocks.iterrows() if safe_str(row["股票代號"])])
+# 🌟 細分股票區域邏輯
+hk_stock_val = 0.0
+us_stock_val = 0.0
+jp_stock_val = 0.0
+
+for _, row in edited_stocks.iterrows():
+    ticker = safe_str(row["股票代號"]).upper()
+    shares = safe_num(row["股數"])
+    if ticker:
+        val = shares * get_stock_price_hkd(ticker, fx_rates)
+        if ticker.endswith(".HK"):
+            hk_stock_val += val
+        elif ticker.endswith(".T"):
+            jp_stock_val += val
+        else:
+            us_stock_val += val
+
+stock_value_hkd = hk_stock_val + us_stock_val + jp_stock_val
+
 property_net_value = sum([safe_num(row["現值 (HKD)"]) - safe_num(row["按揭餘額 (HKD)"]) for _, row in df_real_estate.iterrows() if safe_str(row["物業名稱"])])
 cash_value_hkd = sum([float(val) * fx_rates.get(curr, 1.0) for curr, val in data["cash"].items()])
 bond_value_hkd = sum([safe_num(row["現值 (HKD)"]) for _, row in df_bonds.iterrows() if safe_str(row["債券名稱"])])
@@ -191,7 +208,6 @@ with tab_dash:
 
     st.divider()
 
-    # 🌟 這裡更新了排版：上排 3 個，下排 3 個，加入「每年總支出」
     m1, m2, m3 = st.columns(3)
     m1.metric("🎯 目標 FIRE 金額", f"HK$ {target_fire:,.0f}")
     m2.metric("💰 現行資產淨值", f"HK$ {total_net_assets:,.0f}")
@@ -209,14 +225,17 @@ with tab_dash:
     
     with chart_col1:
         st.subheader("資產分佈")
+        # 🌟 這裡更新了類別名稱與數據
         pie_data = pd.DataFrame({
-            "類別": ["股票", "地產(淨值)", "現金", "債券"],
-            "金額": [stock_value_hkd, property_net_value, cash_value_hkd, bond_value_hkd]
+            "類別": ["港股", "美股", "日股", "地產(淨值)", "現金", "債券"],
+            "金額": [hk_stock_val, us_stock_val, jp_stock_val, property_net_value, cash_value_hkd, bond_value_hkd]
         })
         pie_data = pie_data[pie_data["金額"] > 0]
         if not pie_data.empty:
+            # 🌟 使用高對比色系：紅、藍、黃、綠、橙、紫
+            custom_colors = ["#FF595E", "#1982C4", "#FFCA3A", "#8AC926", "#F4A261", "#6A4C93"]
             fig_pie = px.pie(pie_data, values="金額", names="類別", hole=0.4, 
-                             color_discrete_sequence=px.colors.sequential.Teal)
+                             color_discrete_sequence=custom_colors)
             fig_pie.update_layout(margin=dict(t=0, b=0, l=0, r=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_pie, use_container_width=True)
         else:
