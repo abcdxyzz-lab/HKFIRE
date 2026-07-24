@@ -243,11 +243,14 @@ with tab_dash:
         
         years = list(range(21))
         projected_assets = []
-        current_val = total_net_assets
+        
+        # 🌟 修正邏輯：只有「流動資產」會利疊利，地產淨值保持固定
+        current_liquid = liquid_assets
         
         for y in years:
-            projected_assets.append(current_val)
-            current_val = (current_val * (1 + growth_rate)) + annual_surplus
+            # 預測總資產 = 增值後嘅流動資產 + 固定的地產淨值
+            projected_assets.append(current_liquid + property_net_value)
+            current_liquid = (current_liquid * (1 + growth_rate)) + annual_surplus
             
         fig_line = go.Figure()
         fig_line.add_trace(go.Scatter(x=years, y=projected_assets, mode='lines+markers', 
@@ -261,17 +264,22 @@ with tab_dash:
         )
         st.plotly_chart(fig_line, use_container_width=True)
         
-    # 🌟 這裡新增了「距離 FIRE 的年份預測」
     st.divider()
+    
+    # 🌟 修正邏輯：計算 FIRE 年份時，同樣只將流動資產利疊利
     if target_fire > 0:
         if total_net_assets >= target_fire:
             st.success("🎉 恭喜你！根據目前的資產狀況，你已經成功達到財務自由！")
         else:
             fire_year = 0
-            temp_val = total_net_assets
-            while temp_val < target_fire and fire_year < 100:
+            temp_liquid = liquid_assets
+            temp_total = total_net_assets
+            
+            while temp_total < target_fire and fire_year < 100:
                 fire_year += 1
-                temp_val = (temp_val * (1 + growth_rate)) + annual_surplus
+                # 只有流動資產增長 + 每年盈餘投入
+                temp_liquid = (temp_liquid * (1 + growth_rate)) + annual_surplus
+                temp_total = temp_liquid + property_net_value
                 
             if fire_year >= 100:
                 st.warning("⚠️ 根據目前盈餘與投資回報率，距離財務自由仍需超過 100 年。建議減少支出或嘗試提高收入！")
