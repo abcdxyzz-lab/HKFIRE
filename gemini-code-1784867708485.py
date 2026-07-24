@@ -202,3 +202,30 @@ with tab_dash:
             margin=dict(t=10, b=10, l=10, r=10)
         )
         st.plotly_chart(fig_line, use_container_width=True)
+# ================= 側邊欄備份與還原 =================
+with st.sidebar:
+    st.header("📁 數據備份與還原")
+    st.caption("避免主機休眠遺失數據，請定期下載備份。")
+    
+    # 1. 下載備份按鈕
+    json_string = json.dumps(data, ensure_ascii=False, indent=4)
+    st.download_button(
+        label="⬇️ 下載備份檔 (fire_record.json)",
+        file_name="fire_record.json",
+        mime="application/json",
+        data=json_string,
+        use_container_width=True
+    )
+    
+    st.divider()
+    
+    # 2. 上傳還原按鈕
+    uploaded_file = st.file_uploader("⬆️ 上傳備份檔還原", type="json")
+    if uploaded_file is not None:
+        try:
+            new_data = json.load(uploaded_file)
+            st.session_state.data = new_data
+            save_data(new_data)
+            st.success("✅ 還原成功！請重新整理網頁。")
+        except:
+            st.error("❌ 檔案格式錯誤")
