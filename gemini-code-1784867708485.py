@@ -56,19 +56,26 @@ def get_fx_rates():
             rates[curr] = 0.0
     return rates
 
+# 🎯 這裡更新了邏輯：自動判斷貨幣種類
 @st.cache_data(ttl=900)
-def get_stock_price_hkd(ticker, usd_hkd_rate):
+def get_stock_price_hkd(ticker, fx_rates_dict):
     if not ticker: return 0.0
     try:
-        price = yf.Ticker(ticker).fast_info['lastPrice']
-        if not str(ticker).upper().endswith(".HK"):
-            price *= usd_hkd_rate
-        return price
+        info = yf.Ticker(ticker).fast_info
+        price = info['lastPrice']
+        # 抓取該股票的結算貨幣，如果抓不到就預設當作 USD
+        currency = info.get('currency', 'USD').upper()
+        
+        if currency == "HKD":
+            return price
+        elif currency in fx_rates_dict:
+            return price * fx_rates_dict[currency]
+        else:
+            return price # 遇到未知貨幣時原價返回
     except:
         return 0.0
 
 fx_rates = get_fx_rates()
-usd_hkd = fx_rates.get("USD", 7.8)
 
 # ================= 介面佈局 =================
 st.title("🔥 香港財務自由 (FIRE) Dashboard")
@@ -77,7 +84,6 @@ tab_dash, tab_assets, tab_inc_act, tab_inc_pass, tab_exp_m, tab_exp_y = st.tabs(
     "📊 核心指標與圖表", "💰 當前總資產", "💼 每月主動收入", "💸 每月被動收入", "💳 每月支出", "📅 每年支出"
 ])
 
-# --- 🎯 這裡修正了錯誤：加上了 key=data_key ---
 def create_editor(tab, title, columns, data_key, height=400):
     with tab:
         st.subheader(title)
@@ -90,9 +96,8 @@ with tab_assets:
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("📈 股票 (自動抓取股價)")
-        st.caption("港股請加 .HK (例: 0700.HK)，美股直接輸入代號 (例: AAPL)")
+        st.caption("港股加 .HK (如 0700.HK)，美股直打 (如 AAPL)，日股加 .T (如 7203.T)")
         df_stocks = pd.DataFrame(data["stocks"], columns=["股票代號", "股數"])
-        # --- 🎯 這裡修正了錯誤：加上了 key="stocks_editor" ---
         edited_stocks = st.data_editor(df_stocks, height=400, use_container_width=True, key="stocks_editor")
         data["stocks"] = edited_stocks.values.tolist()
         
@@ -115,7 +120,8 @@ df_exp_m = create_editor(tab_exp_m, "💳 每月支出", ["項目名稱", "金�
 df_exp_y = create_editor(tab_exp_y, "📅 每年支出 (非月費)", ["項目名稱", "金額 (HKD)"], "annual_expenses")
 
 # ================= 核心邏輯計算 =================
-stock_value_hkd = sum([row[1] * get_stock_price_hkd(row[0], usd_hkd) for row in data["stocks"] if row[0]])
+# 🎯 這裡也跟著更新：傳入所有的匯率字典
+stock_value_hkd = sum([row[1] * get_stock_price_hkd(row[0], fx_rates) for row in data["stocks"] if row[0]])
 property_net_value = sum([float(row[1]) - float(row[2]) for row in data["real_estate"] if row[0]])
 cash_value_hkd = sum([float(val) * fx_rates.get(curr, 1.0) for curr, val in data["cash"].items()])
 bond_value_hkd = sum([float(row[1]) for row in data["bonds"] if row[0]])
