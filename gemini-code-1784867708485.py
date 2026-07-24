@@ -31,7 +31,7 @@ def get_sheet():
     client = get_gspread_client()
     return client.open_by_url(st.secrets["SHEET_URL"]).sheet1
 
-# ================= 數據儲存與讀取邏輯 (雲端版) =================
+# ================= 數據儲存與讀取邏輯 =================
 def load_data():
     try:
         sheet = get_sheet()
@@ -100,8 +100,9 @@ fx_rates = get_fx_rates()
 # ================= 介面佈局 =================
 st.title("🔥 香港財務自由 (FIRE) Dashboard")
 
-tab_dash, tab_assets, tab_inc_act, tab_inc_pass, tab_exp_m, tab_exp_y = st.tabs([
-    "📊 核心指標與圖表", "💰 當前總資產", "💼 每月主動收入", "💸 每月被動收入", "💳 每月支出", "📅 每年支出"
+# 🌟 這裡加入了全新的「📈 個股明細」分頁
+tab_dash, tab_assets, tab_stock_detail, tab_inc_act, tab_inc_pass, tab_exp_m, tab_exp_y = st.tabs([
+    "📊 核心指標與圖表", "💰 當前總資產", "📈 個股明細", "💼 每月主動收入", "💸 每月被動收入", "💳 每月支出", "📅 每年支出"
 ])
 
 def create_editor(tab, title, columns, data_key, height=400):
@@ -148,18 +149,33 @@ def safe_str(val):
 hk_stock_val = 0.0
 us_stock_val = 0.0
 jp_stock_val = 0.0
+stock_details_list = [] # 🌟 用來儲存每隻股票嘅詳細資料
 
 for _, row in edited_stocks.iterrows():
     ticker = safe_str(row["股票代號"]).upper()
     shares = safe_num(row["股數"])
-    if ticker:
-        val = shares * get_stock_price_hkd(ticker, fx_rates)
+    if ticker and shares > 0:
+        price_hkd = get_stock_price_hkd(ticker, fx_rates)
+        val = shares * price_hkd
+        
+        region = "美股"
         if ticker.endswith(".HK"):
             hk_stock_val += val
+            region = "港股"
         elif ticker.endswith(".T"):
             jp_stock_val += val
+            region = "日股"
         else:
             us_stock_val += val
+            
+        # 記錄每隻股票嘅換算結果
+        stock_details_list.append({
+            "股票代號": ticker,
+            "市場": region,
+            "持有股數": shares,
+            "現價 (HKD)": price_hkd,
+            "總市值 (HKD)": val
+        })
 
 stock_value_hkd = hk_stock_val + us_stock_val + jp_stock_val
 property_net_value = sum([safe_num(row["現值 (HKD)"]) - safe_num(row["按揭餘額 (HKD)"]) for _, row in df_real_estate.iterrows() if safe_str(row["物業名稱"])])
@@ -177,6 +193,48 @@ y_exp = sum([safe_num(row["金額 (HKD)"]) for _, row in df_exp_y.iterrows() if 
 annual_total_exp = (m_exp * 12) + y_exp
 annual_surplus = ((m_active + m_passive) * 12) - annual_total_exp
 
+# ================= 新增：個股明細分頁內容 =================
+with tab_stock_detail:
+    if stock_details_list:
+        col_list, col_tree = st.columns([1, 1.2])
+        
+        df_stocks_display = pd.DataFrame(stock_details_list)
+        # 自動由大至小排序
+        df_stocks_display = df_stocks_display.sort_values(by="總市值 (HKD)", ascending=False).reset_index(drop=True)
+        # 計算佔比
+        df_stocks_display["佔股票總值"] = (df_stocks_display["總市值 (HKD)"] / stock_value_hkd)
+        
+        with col_list:
+            st.subheader("📋 個股即時市值清單")
+            st.dataframe(
+                df_stocks_display.style.format({
+                    "持有股數": "{:,.0f}",
+                    "現價 (HKD)": "${:,.2f}",
+                    "總市值 (HKD)": "${:,.2f}",
+                    "佔股票總值": "{:.1%}"
+                }),
+                use_container_width=True,
+                height=550
+            )
+            
+        with col_tree:
+            st.subheader("📊 股票矩陣分佈 (Treemap)")
+            # 畫出極具專業感嘅矩陣圖
+            fig_tree = px.treemap(
+                df_stocks_display, 
+                path=["市場", "股票代號"], 
+                values="總市值 (HKD)",
+                color="市場", 
+                color_discrete_map={"港股":"#FF595E", "美股":"#1982C4", "日股":"#FFCA3A"}
+            )
+            fig_tree.update_traces(textinfo="label+value+percent parent")
+            fig_tree.update_layout(margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_tree, use_container_width=True)
+    else:
+        st.info("尚無股票數據，請先於「💰 當前總資產」分頁中輸入股票代號及股數。")
+
+
+# ================= Dashboard 儀表板 =================
 with tab_dash:
     col_rate, col_save = st.columns([3, 1])
     with col_rate:
@@ -243,12 +301,9 @@ with tab_dash:
         
         years = list(range(21))
         projected_assets = []
-        
-        # 🌟 修正邏輯：只有「流動資產」會利疊利，地產淨值保持固定
         current_liquid = liquid_assets
         
         for y in years:
-            # 預測總資產 = 增值後嘅流動資產 + 固定的地產淨值
             projected_assets.append(current_liquid + property_net_value)
             current_liquid = (current_liquid * (1 + growth_rate)) + annual_surplus
             
@@ -265,8 +320,6 @@ with tab_dash:
         st.plotly_chart(fig_line, use_container_width=True)
         
     st.divider()
-    
-    # 🌟 修正邏輯：計算 FIRE 年份時，同樣只將流動資產利疊利
     if target_fire > 0:
         if total_net_assets >= target_fire:
             st.success("🎉 恭喜你！根據目前的資產狀況，你已經成功達到財務自由！")
@@ -277,7 +330,6 @@ with tab_dash:
             
             while temp_total < target_fire and fire_year < 100:
                 fire_year += 1
-                # 只有流動資產增長 + 每年盈餘投入
                 temp_liquid = (temp_liquid * (1 + growth_rate)) + annual_surplus
                 temp_total = temp_liquid + property_net_value
                 
