@@ -124,7 +124,7 @@ with tab_assets:
         st.subheader("📈 股票 (自動抓取股價)")
         st.caption("港股加 .HK (如 0700.HK)，美股直打 (如 AAPL)，日股加 .T (如 7203.T)")
         df_stocks = pd.DataFrame(data["stocks"], columns=["股票代號", "股數"])
-        edited_stocks = st.data_editor(df_stocks, height=400, use_container_width=True, key="stocks_editor")
+        edited_stocks = st.data_editor(df_stocks, height=600, use_container_width=True, key="stocks_editor", num_rows="dynamic")
         data["stocks"] = edited_stocks.values.tolist()
         
         st.subheader("💵 現金 (自動匯率換算 HKD)")
