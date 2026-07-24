@@ -20,7 +20,6 @@ st.markdown("""
 # ================= 連線 Google Sheets =================
 @st.cache_resource
 def get_gspread_client():
-    # 讀取 Streamlit Secrets 裡的機密資料
     creds_dict = json.loads(st.secrets["GOOGLE_JSON"])
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -28,7 +27,6 @@ def get_gspread_client():
 
 def get_sheet():
     client = get_gspread_client()
-    # 讀取目標試算表的第一個工作表
     return client.open_by_url(st.secrets["SHEET_URL"]).sheet1
 
 # ================= 數據儲存與讀取邏輯 (雲端版) =================
@@ -41,7 +39,6 @@ def load_data():
     except Exception as e:
         st.warning(f"讀取雲端資料失敗，將使用預設空白表格。錯誤：{e}")
         
-    # 如果 A1 是空的，返回預設格式
     return {
         "stocks": [["", 0] for _ in range(20)],
         "real_estate": [["", 0.0, 0.0] for _ in range(10)],
@@ -57,7 +54,6 @@ def load_data():
 def save_data(data):
     try:
         sheet = get_sheet()
-        # 將整包資料轉為文字，存入 A1 儲存格
         sheet.update_acell('A1', json.dumps(data, ensure_ascii=False))
         st.toast('✅ 數據已成功同步至 Google Sheets！', icon='☁️')
     except Exception as e:
@@ -67,8 +63,6 @@ if 'data' not in st.session_state:
     st.session_state.data = load_data()
 
 data = st.session_state.data
-
-# --- (以下保留原本所有的 # ================= 即時金融數據抓取 ================= 與之後的程式碼) ---
 
 # ================= 即時金融數據抓取 =================
 @st.cache_data(ttl=3600)
@@ -82,14 +76,12 @@ def get_fx_rates():
             rates[curr] = 0.0
     return rates
 
-# 🎯 這裡更新了邏輯：自動判斷貨幣種類
 @st.cache_data(ttl=900)
 def get_stock_price_hkd(ticker, fx_rates_dict):
     if not ticker: return 0.0
     try:
         info = yf.Ticker(ticker).fast_info
         price = info['lastPrice']
-        # 抓取該股票的結算貨幣，如果抓不到就預設當作 USD
         currency = info.get('currency', 'USD').upper()
         
         if currency == "HKD":
@@ -97,7 +89,7 @@ def get_stock_price_hkd(ticker, fx_rates_dict):
         elif currency in fx_rates_dict:
             return price * fx_rates_dict[currency]
         else:
-            return price # 遇到未知貨幣時原價返回
+            return price
     except:
         return 0.0
 
@@ -114,18 +106,17 @@ def create_editor(tab, title, columns, data_key, height=400):
     with tab:
         st.subheader(title)
         df = pd.DataFrame(data[data_key], columns=columns)
+        # 解除綁定，修正 Double Entry Bug
         edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, height=height, key=data_key)
-        data[data_key] = edited_df.values.tolist()
         return edited_df
 
 with tab_assets:
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("📈 股票 (自動抓取股價)")
-        st.caption("港股加 .HK (如 0700.HK)，美股直打 (如 AAPL)，日股加 .T (如 7203.T)")
+        st.caption("港股加 .HK，美股直打，日股加 .T (如 7203.T)")
         df_stocks = pd.DataFrame(data["stocks"], columns=["股票代號", "股數"])
         edited_stocks = st.data_editor(df_stocks, height=600, use_container_width=True, key="stocks_editor", num_rows="dynamic")
-        data["stocks"] = edited_stocks.values.tolist()
         
         st.subheader("💵 現金 (自動匯率換算 HKD)")
         c1, c2, c3 = st.columns(3)
@@ -146,17 +137,25 @@ df_exp_m = create_editor(tab_exp_m, "💳 每月支出", ["項目名稱", "金�
 df_exp_y = create_editor(tab_exp_y, "📅 每年支出 (非月費)", ["項目名稱", "金額 (HKD)"], "annual_expenses")
 
 # ================= 核心邏輯計算 =================
-# 🎯 這裡也跟著更新：傳入所有的匯率字典
-stock_value_hkd = sum([row[1] * get_stock_price_hkd(row[0], fx_rates) for row in data["stocks"] if row[0]])
-property_net_value = sum([float(row[1]) - float(row[2]) for row in data["real_estate"] if row[0]])
+# 安全轉換數據格式，防止空白行導致報錯
+def safe_num(val):
+    try: return float(val) if pd.notna(val) and val != "" else 0.0
+    except: return 0.0
+
+def safe_str(val):
+    return str(val).strip() if pd.notna(val) and val != "" else ""
+
+stock_value_hkd = sum([safe_num(row["股數"]) * get_stock_price_hkd(safe_str(row["股票代號"]), fx_rates) for _, row in edited_stocks.iterrows() if safe_str(row["股票代號"])])
+property_net_value = sum([safe_num(row["現值 (HKD)"]) - safe_num(row["按揭餘額 (HKD)"]) for _, row in df_real_estate.iterrows() if safe_str(row["物業名稱"])])
 cash_value_hkd = sum([float(val) * fx_rates.get(curr, 1.0) for curr, val in data["cash"].items()])
-bond_value_hkd = sum([float(row[1]) for row in data["bonds"] if row[0]])
+bond_value_hkd = sum([safe_num(row["現值 (HKD)"]) for _, row in df_bonds.iterrows() if safe_str(row["債券名稱"])])
+
 total_net_assets = stock_value_hkd + property_net_value + cash_value_hkd + bond_value_hkd
 
-m_active = sum([float(row[1]) for row in data["active_income"] if row[0]])
-m_passive = sum([float(row[1]) for row in data["passive_income"] if row[0]])
-m_exp = sum([float(row[1]) for row in data["monthly_expenses"] if row[0]])
-y_exp = sum([float(row[1]) for row in data["annual_expenses"] if row[0]])
+m_active = sum([safe_num(row["金額 (HKD)"]) for _, row in df_active_inc.iterrows() if safe_str(row["項目名稱"])])
+m_passive = sum([safe_num(row["金額 (HKD)"]) for _, row in df_passive_inc.iterrows() if safe_str(row["項目名稱"])])
+m_exp = sum([safe_num(row["金額 (HKD)"]) for _, row in df_exp_m.iterrows() if safe_str(row["項目名稱"])])
+y_exp = sum([safe_num(row["金額 (HKD)"]) for _, row in df_exp_y.iterrows() if safe_str(row["項目名稱"])])
 
 annual_total_exp = (m_exp * 12) + y_exp
 annual_surplus = ((m_active + m_passive) * 12) - annual_total_exp
@@ -171,6 +170,18 @@ with tab_dash:
     with col_save:
         st.write("") 
         if st.button("💾 儲存所有記錄", use_container_width=True, type="primary"):
+            # 儲存前先清理空白欄位，避免 Json 格式錯誤
+            def df_to_list(df):
+                return df.fillna("").values.tolist()
+            
+            data["stocks"] = df_to_list(edited_stocks)
+            data["real_estate"] = df_to_list(df_real_estate)
+            data["bonds"] = df_to_list(df_bonds)
+            data["active_income"] = df_to_list(df_active_inc)
+            data["passive_income"] = df_to_list(df_passive_inc)
+            data["monthly_expenses"] = df_to_list(df_exp_m)
+            data["annual_expenses"] = df_to_list(df_exp_y)
+            
             save_data(data)
 
     target_fire = annual_total_exp / fire_rate if fire_rate > 0 else 0
@@ -228,30 +239,3 @@ with tab_dash:
             margin=dict(t=10, b=10, l=10, r=10)
         )
         st.plotly_chart(fig_line, use_container_width=True)
-# ================= 側邊欄備份與還原 =================
-with st.sidebar:
-    st.header("📁 數據備份與還原")
-    st.caption("避免主機休眠遺失數據，請定期下載備份。")
-    
-    # 1. 下載備份按鈕
-    json_string = json.dumps(data, ensure_ascii=False, indent=4)
-    st.download_button(
-        label="⬇️ 下載備份檔 (fire_record.json)",
-        file_name="fire_record.json",
-        mime="application/json",
-        data=json_string,
-        use_container_width=True
-    )
-    
-    st.divider()
-    
-    # 2. 上傳還原按鈕
-    uploaded_file = st.file_uploader("⬆️ 上傳備份檔還原", type="json")
-    if uploaded_file is not None:
-        try:
-            new_data = json.load(uploaded_file)
-            st.session_state.data = new_data
-            save_data(new_data)
-            st.success("✅ 還原成功！請重新整理網頁。")
-        except:
-            st.error("❌ 檔案格式錯誤")
