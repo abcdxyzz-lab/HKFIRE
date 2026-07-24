@@ -11,7 +11,7 @@ from google.oauth2.service_account import Credentials
 # ================= 配置與介面設定 =================
 st.set_page_config(page_title="HK FIRE Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# 🌟 這裡更新了 CSS：強制將標題變成淺灰，數值變成純白加粗
+# 🌟 CSS：強制將標題變成淺灰，數值變成純白加粗
 st.markdown("""
     <style>
     [data-testid="stMetric"] { background-color: #1E2127; padding: 15px; border-radius: 10px; border: 1px solid #333; }
@@ -153,7 +153,6 @@ bond_value_hkd = sum([safe_num(row["現值 (HKD)"]) for _, row in df_bonds.iterr
 
 total_net_assets = stock_value_hkd + property_net_value + cash_value_hkd + bond_value_hkd
 
-# 🌟 這裡加入了「總流動資產」的計算
 liquid_assets = total_net_assets - property_net_value
 
 m_active = sum([safe_num(row["金額 (HKD)"]) for _, row in df_active_inc.iterrows() if safe_str(row["項目名稱"])])
@@ -192,15 +191,16 @@ with tab_dash:
 
     st.divider()
 
-    # 🌟 這裡重新排版：上排 3 個指標，下排 2 個指標，避免手機版太擠
+    # 🌟 這裡更新了排版：上排 3 個，下排 3 個，加入「每年總支出」
     m1, m2, m3 = st.columns(3)
     m1.metric("🎯 目標 FIRE 金額", f"HK$ {target_fire:,.0f}")
     m2.metric("💰 現行資產淨值", f"HK$ {total_net_assets:,.0f}")
     m3.metric("💧 總流動資產", f"HK$ {liquid_assets:,.0f}")
     
-    m4, m5 = st.columns(2)
-    m4.metric("📈 每年盈餘", f"HK$ {annual_surplus:,.0f}")
-    m5.metric("🔥 財務自由進度", f"{fire_progress:,.2f} %")
+    m4, m5, m6 = st.columns(3)
+    m4.metric("💳 每年總支出", f"HK$ {annual_total_exp:,.0f}")
+    m5.metric("📈 每年盈餘", f"HK$ {annual_surplus:,.0f}")
+    m6.metric("🔥 財務自由進度", f"{fire_progress:,.2f} %")
 
     st.progress(min(fire_progress / 100, 1.0))
     st.markdown("<br>", unsafe_allow_html=True)
