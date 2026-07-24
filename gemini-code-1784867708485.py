@@ -5,6 +5,8 @@ import json
 import os
 import plotly.express as px
 import plotly.graph_objects as go
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ================= 配置與介面設定 =================
 st.set_page_config(page_title="HK FIRE Dashboard", layout="wide", initial_sidebar_state="expanded")
@@ -15,13 +17,31 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-DATA_FILE = "fire_record.json"
+# ================= 連線 Google Sheets =================
+@st.cache_resource
+def get_gspread_client():
+    # 讀取 Streamlit Secrets 裡的機密資料
+    creds_dict = json.loads(st.secrets["GOOGLE_JSON"])
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    return gspread.authorize(creds)
 
-# ================= 數據儲存與讀取邏輯 =================
+def get_sheet():
+    client = get_gspread_client()
+    # 讀取目標試算表的第一個工作表
+    return client.open_by_url(st.secrets["SHEET_URL"]).sheet1
+
+# ================= 數據儲存與讀取邏輯 (雲端版) =================
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+    try:
+        sheet = get_sheet()
+        val = sheet.acell('A1').value
+        if val:
+            return json.loads(val)
+    except Exception as e:
+        st.warning(f"讀取雲端資料失敗，將使用預設空白表格。錯誤：{e}")
+        
+    # 如果 A1 是空的，返回預設格式
     return {
         "stocks": [["", 0] for _ in range(20)],
         "real_estate": [["", 0.0, 0.0] for _ in range(10)],
@@ -35,14 +55,20 @@ def load_data():
     }
 
 def save_data(data):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-    st.toast('✅ 數據已成功儲存！', icon='💾')
+    try:
+        sheet = get_sheet()
+        # 將整包資料轉為文字，存入 A1 儲存格
+        sheet.update_acell('A1', json.dumps(data, ensure_ascii=False))
+        st.toast('✅ 數據已成功同步至 Google Sheets！', icon='☁️')
+    except Exception as e:
+        st.error(f"❌ 儲存失敗：{e}")
 
 if 'data' not in st.session_state:
     st.session_state.data = load_data()
 
 data = st.session_state.data
+
+# --- (以下保留原本所有的 # ================= 即時金融數據抓取 ================= 與之後的程式碼) ---
 
 # ================= 即時金融數據抓取 =================
 @st.cache_data(ttl=3600)
